@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "lodash.get": "^4.4.2",
+    "nanoid": "^3.2.0"
+  }
+}
