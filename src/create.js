@@ -1,8 +1,8 @@
-import { isFunction, isObject } from "lodash";
 import get from "lodash.get";
-import { isEmptyObject, wrapInArray } from "./utils";
+import { isEmptyObject, wrapInArray, isFunction, isObject } from "./utils";
+import { set, reactive } from "vue-demi";
 
- function copyAugment(target, src) {
+function copyAugment(target, src) {
   Object.keys(src).forEach((key) => {
     if (!key[src]) return;
     def(target, key, key[src]);
@@ -13,7 +13,7 @@ function protoAugment(target, src) {
   target.__proto__ = src;
 }
 
- function def(obj, key, val, enumerable) {
+function def(obj, key, val, enumerable) {
   Object.defineProperty(obj, key, {
     value: val,
     enumerable: !!enumerable,
@@ -29,7 +29,7 @@ function initVmData(path, init, name) {
   if (!Array.isArray(targetList)) throw new Error(`[selectable]: ${name}不是一个数组`);
 
   const res = targetList.map(initList);
-  this.$set(this, name, res);
+  set(this, name, res);
   const vmData = res;
 
   const { push, pop, shift, unshift, splice, sort, reverse } = targetList.__proto__ ?? targetList;
@@ -54,9 +54,11 @@ function initVmData(path, init, name) {
     vmData.unshift(...args.map(initList));
     return unshift.apply(targetList, args);
   };
-  arrayMethods.splice = function (start, deleteCount, ...args) {
-    vmData.splice(start, deleteCount, ...args.map(initList));
-    return splice.call(targetList, start, deleteCount, ...args);
+  arrayMethods.splice = function (...args) {
+    vmData.splice(
+      ...args.map((item, index, arr) => (index > 1 ? initList(item, index, arr) : item))
+    );
+    return splice.call(targetList, ...args);
   };
   arrayMethods.sort = function (compareFunction) {
     vmData.sort((a, b) => compareFunction(a.data, b.data));
@@ -74,86 +76,83 @@ function initVmData(path, init, name) {
 
 export function createVmMixin(path, { name = "vmData" } = {}) {
   const obj = { __attrs__: {}, __fns__: [] };
+  const mixin = {
+    mixins: [],
+    data: () => ({
+      [name]: [],
+    }),
+    computed: {
+      __vmData__() {
+        return this[name];
+      },
+    },
+    watch: {
+      [path]: {
+        immediate: true,
+        handler(val, oldVal) {
+          if (val === oldVal) return;
+          initVmData.call(
+            this,
+            path,
+            function init(item, index, arr) {
+              const memoryItem = oldVal?.find((oldItem) => oldItem === item);
+              const parent = memoryItem?.__vmData__;
+              if (parent) return parent;
 
-  class CreateMixin {
-    data;
-    mixins = [];
-    computed;
-    watch;
+              const attr = obj.__attrs__;
+              const res = reactive({ data: item });
 
-    constructor() {
-      this.data = () => ({
-        [name]: [],
-      });
-      this.computed = {
-        __vmData__() {
-          return get(this, name);
-        },
-      };
+              Object.keys(attr).forEach((key) => {
+                const value = attr[key];
+                if (key === "data") return console.warn(`[createVmMixin]: attrs 不能有 data`);
+                set(res, key, isFunction(value) ? value.call(this, item, index, arr) : value);
+              });
 
-      this.watch = {
-        [path]: {
-          immediate: true,
-          handler(val, oldVal) {
-            if (val === oldVal) return;
-            initVmData.call(
-              this,
-              path,
-              function init(item, index, arr) {
-                const memoryItem = oldVal?.find((oldItem) => oldItem === item);
-                const parent = memoryItem?.__vmData__;
-                if (parent) return parent;
-
-                const attr = (obj.__attrs__);
-                const res = { data: item };
-
-                Object.keys(attr).forEach((key) => {
-                  const value = attr[key];
-                  if (key === "data") return console.warn(`[createVmMixin]: attrs 不能有 data`);
-
-                  res[key] = isFunction(value) ? value.call(this, item, index, arr) : value;
-                });
-
-                const vm = this;
-                Reflect.defineProperty(res, "data", {
+              Reflect.defineProperty(res, "data", {
+                get: () => item,
+                set: (val) => set(arr, index, val),
+              });
+              if (isObject(item)) {
+                Reflect.defineProperty(item, "__vmData__", {
                   get() {
-                    return item;
-                  },
-                  set(val) {
-                    vm.$set(arr, index, val);
+                    return res;
                   },
                 });
-                if (isObject(item)) {
-                  Reflect.defineProperty(item, "__vmData__", {
-                    get() {
-                      return res;
-                    },
-                  });
-                }
+              }
 
-                obj.__fns__.forEach((fn) => fn?.call(this, item, res, index));
-                return res;
-              },
-              name
-            );
-          },
+              obj.__fns__.forEach((fn) => fn?.call(this, item, res, index));
+              return res;
+            },
+            name
+          );
         },
+      },
+    },
+  };
+
+  function extend({ attrs, fn, mixins }) {
+    if (Array.isArray(mixin.mixins)) {
+      wrapInArray(mixins).forEach((mixinItem) => {
+        if (mixin.mixins.includes(mixinItem)) return;
+        mixin.mixins.push(mixinItem);
+      });
+    }
+    if (attrs && !isEmptyObject(attrs)) {
+      const oldAttrs = obj.__attrs__;
+      obj.__attrs__ = {
+        ...oldAttrs,
+        ...attrs,
       };
     }
-
-    __extend__({ attrs, fn, mixins }) {
-      if (mixins) this.mixins.push(...wrapInArray(mixins));
-      if (attrs && !isEmptyObject((attrs))) {
-        const oldAttrs = (obj.__attrs__);
-        obj.__attrs__ = {
-          ...oldAttrs,
-          ...(attrs),
-        };
-      }
-      if (isFunction(fn)) obj.__fns__.push(fn);
-      return this;
-    }
+    if (isFunction(fn)) obj.__fns__.push(fn);
+    return mixin;
   }
+  Reflect.defineProperty(mixin, "__extend__", {
+    value: extend,
+    writable: false,
+    configurable: false,
+    enumerable: false,
+  });
 
-  return new CreateMixin();
+  return mixin;
 }

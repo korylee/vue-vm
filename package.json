@@ -1,6 +1,20 @@
 {
+  "name": "vue-vm",
+  "version": "0.0.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
   "dependencies": {
     "lodash.get": "^4.4.2",
     "nanoid": "^3.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^2.2.4",
+    "@vue/composition-api": "^1.4.9",
+    "vite": "^2.8.6",
+    "vue": "^3.2.31",
+    "vue-demi": "^0.12.4",
+    "vue2": "npm:vue@^2.6.14"
   }
 }
